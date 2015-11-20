@@ -80,7 +80,7 @@ function SteppableLSTM:step(input)
                 self.state[i][1],  -- prev_c for this layer
                 self.state[i][2],  -- prev_h for this layer
             }
-
+        -- print(inputs)
         output = self.network[i]:forward(inputs)
 
         -- the trace for this layer at this step is just a table of its

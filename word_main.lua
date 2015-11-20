@@ -2,7 +2,7 @@ require 'nn'
 require 'gnuplot'
 require 'optim'
 require 'nngraph'
-require 'tools'
+-- require 'tools'
 require 'vis'
 
 require 'utils'
@@ -24,7 +24,7 @@ cmd:option('-vocab_size',10000,'what vocab size to use')
 cmd:option('-rnn_size', 128, 'size of LSTM internal state')
 cmd:option('-layer_size', 128, 'size of the layers')
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
-cmd:option('-model', 'cf', 'cf or lstm')
+cmd:option('-model', 'lstm', 'cf or lstm')
 
 
 -- optimization
@@ -33,7 +33,7 @@ cmd:option('-learning_rate_decay',0.97,'learning rate decay')
 cmd:option('-learning_rate_decay_after',5,'in number of epochs, when to start decaying the learning rate')
 cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
 cmd:option('-dropout',0,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
--- cmd:option('-seq_length',50,'number of timesteps to unroll for')
+cmd:option('-seq_length',50,'number of timesteps to unroll for')
 
 cmd:option('-steps_per_output',1,'number of feedback steps to run per output')
 cmd:option('-num_functions',65,'number of function layers to create')
@@ -44,7 +44,7 @@ cmd:option('-function_nonlinearity','sigmoid','nonlinearity for functions. sets 
 
 
 
-cmd:option('-batch_size',30,'number of sequences to train on in parallel')
+cmd:option('-batch_size',10,'number of sequences to train on in parallel')
 
 cmd:option('-max_epochs',20,'number of full passes through the training data')
 cmd:option('-grad_clip',3,'clip gradients at this value')
@@ -70,10 +70,10 @@ cmd:text()
 opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
 
-local vocab_size = opt.vocab_size
-if opt.data_file == '' then
-    opt.data_file = "data/wiki/dataset_"..vocab_size..".t7"
-end
+-- local vocab_size = opt.vocab_size
+-- if opt.data_file == '' then
+--     opt.data_file = "data/wiki/dataset_"..vocab_size..".t7"
+-- end
 
 local savedir = string.format('%s/%s', opt.checkpoint_dir, opt.name)
 os.execute('mkdir -p '..savedir)
@@ -88,17 +88,20 @@ end
 f:flush()
 f:close()
 
+train_data = torch.load('/Users/ardavan/Documents/Research/RNAN/temp/final_101.txt')
+test_data = torch.load('/Users/ardavan/Documents/Research/RNAN/temp/final_102.txt')
+
 if opt.gpuid >= 0 then
     require 'cutorch'
     require 'cunn'
 end
 
-local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
-local split_sizes = {opt.train_frac, opt.val_frac, test_frac}
+-- local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
+-- local split_sizes = {opt.train_frac, opt.val_frac, test_frac}
 
--- create the data loader class
-local loader = WikiBatchLoader.create(opt.data_file, split_sizes)
-opt.seq_length = loader.seq_length - 1
+-- -- create the data loader class
+-- local loader = WikiBatchLoader.create(opt.data_file, split_sizes)
+opt.seq_length = train_data:size()[2]
 -- local vocab_size = loader.vocab_size  -- the number of distinct characters
 
 
@@ -126,31 +129,13 @@ if opt.import ~= '' then
     opt.num_functions = checkpoint.opt.num_functions
 
 else
-    if opt.model == 'cf' then
-        require 'CFNetwork_multistep'
-        one_hot = OneHot(vocab_size)
-        recurrent = nn.CFNetwork({
-                input_dimension = vocab_size,
-                encoded_dimension = opt.layer_size,
-                num_functions = opt.num_functions,
-                controller_units_per_layer = opt.rnn_size,
-                controller_num_layers = opt.num_layers,
-                controller_dropout = opt.dropout,
-                steps_per_output = opt.steps_per_output,
-                controller_nonlinearity = opt.controller_nonlinearity,
-                function_nonlinearity = opt.function_nonlinearity,
-            })
-        model = nn.Sequential()
-
-        model:add(one_hot)
-        model:add(recurrent)
-    elseif opt.model == 'lstm' then
+    if opt.model == 'lstm' then
         require 'SteppableLSTM'
-        one_hot = OneHot(vocab_size)
-        recurrent = nn.SteppableLSTM(vocab_size, vocab_size, opt.rnn_size, opt.num_layers, opt.dropout)
+        -- one_hot = OneHot(vocab_size)
+        recurrent = nn.SteppableLSTM(877, 45, opt.rnn_size, opt.num_layers, opt.dropout)
         model = nn.Sequential()
 
-        model:add(one_hot)
+        -- model:add(one_hot)
         model:add(recurrent)
     else
         error("Model type not valid.")
@@ -160,7 +145,7 @@ else
     params:uniform(-0.08, 0.08) -- small numbers uniform
 end
 
-criterion = nn.CrossEntropyCriterion()
+criterion = nn.MSECriterion()
 
 if opt.gpuid >= 0 then
     model:cuda()
@@ -217,12 +202,12 @@ function feval(x)
     recurrent:reset()
 
     ------------------ get minibatch -------------------
-    local x, y = loader:next_batch(1)
-    if opt.gpuid >= 0 then -- ship the input arrays to GPU
-        -- have to convert to float because integers can't be cuda()'d
-        x = x:float():cuda()
-        y = y:float():cuda()
-    end
+    -- local x, y = loader:next_batch(1)
+    -- if opt.gpuid >= 0 then -- ship the input arrays to GPU
+    --     -- have to convert to float because integers can't be cuda()'d
+    --     x = x:float():cuda()
+    --     y = y:float():cuda()
+    -- end
     -- print(x)
 
     ------------------- forward pass -------------------
@@ -232,15 +217,21 @@ function feval(x)
     local loss = 0
 
     model:training() -- make sure we are in correct mode (this is cheap, sets flag)
-    predictions = model:forward(x)
-    for t = 1, opt.seq_length do
-        loss = loss + criterion:forward(predictions[t], y[{{}, t}])
-        grad_outputs[t] = criterion:backward(predictions[t], y[{{}, t}]):clone()
+    predictions = model:forward(train_data[{{},{1,49},{}}])
+
+    -- print(train_data:size())
+    for t = 1, opt.seq_length - 1 do
+
+        -- print(train_data[{{},{t + 1},{1,45}}])
+        -- print(predictions[t])
+        -- print(t)
+        loss = loss + criterion:forward(predictions[t], train_data[{{},{t + 1},{1,45}}]:reshape(10, 45))
+        grad_outputs[t] = criterion:backward(predictions[t], train_data[{{},{t + 1},{1,45}}]):clone()
     end
     loss = loss / opt.seq_length
     ------------------ backward pass -------------------
 
-    model:backward(x, grad_outputs)
+    model:backward(train_data[{{},{1,49},{}}], grad_outputs)
     grad_params:clamp(-opt.grad_clip, opt.grad_clip)
     -- grad_params:mul(-1)
     -- profiler:lap('batch')
@@ -252,12 +243,12 @@ end
 train_losses = {}
 val_losses = {}
 local optim_state = {learningRate = opt.learning_rate, alpha = opt.decay_rate}
-local iterations = opt.max_epochs * loader.ntrain
-local iterations_per_epoch = loader.ntrain
+local iterations = 1000
+local iterations_per_epoch = 50
 local loss0 = nil
 
 for i = 1, iterations do
-    local epoch = i / loader.ntrain
+    local epoch = i 
 
     local timer = torch.Timer()
     local _, loss = optim.rmsprop(feval, params, optim_state)
@@ -269,45 +260,45 @@ for i = 1, iterations do
     train_losses[i] = train_loss
 
     -- exponential learning rate decay
-    if i % loader.ntrain == 0 and opt.learning_rate_decay < 1 then
-        if epoch >= opt.learning_rate_decay_after then
-            local decay_factor = opt.learning_rate_decay
-            optim_state.learningRate = optim_state.learningRate * decay_factor -- decay it
-            print('decayed learning rate by a factor ' .. decay_factor .. ' to ' .. optim_state.learningRate)
-        end
-    end
+    -- if i % loader.ntrain == 0 and opt.learning_rate_decay < 1 then
+    --     if epoch >= opt.learning_rate_decay_after then
+    --         local decay_factor = opt.learning_rate_decay
+    --         optim_state.learningRate = optim_state.learningRate * decay_factor -- decay it
+    --         print('decayed learning rate by a factor ' .. decay_factor .. ' to ' .. optim_state.learningRate)
+    --     end
+    -- end
 
     -- every now and then or on last iteration
-    if i % opt.eval_val_every == 0 or i == iterations then
-        -- evaluate loss on validation data
-        local val_loss = eval_split(2) -- 2 = validation
-        val_losses[i] = val_loss
-        print(string.format('[epoch %.3f] Validation loss: %6.8f', epoch, val_loss))
+    -- if i % opt.eval_val_every == 0 or i == iterations then
+    --     -- evaluate loss on validation data
+    --     local val_loss = eval_split(2) -- 2 = validation
+    --     val_losses[i] = val_loss
+    --     print(string.format('[epoch %.3f] Validation loss: %6.8f', epoch, val_loss))
 
 
 
-        local model_file = string.format('%s/epoch%.2f_%.4f.t7', savedir, epoch, val_loss)
-        print('saving checkpoint to ' .. model_file)
-        local checkpoint = {}
-        checkpoint.model = model
-        checkpoint.opt = opt
-        checkpoint.train_losses = train_losses
-        checkpoint.val_loss = val_loss
-        checkpoint.val_losses = val_losses
-        checkpoint.i = i
-        checkpoint.epoch = epoch
-        -- checkpoint.vocab = loader.vocab_mapping
-        torch.save(model_file, checkpoint)
+    --     local model_file = string.format('%s/epoch%.2f_%.4f.t7', savedir, epoch, val_loss)
+    --     print('saving checkpoint to ' .. model_file)
+    --     local checkpoint = {}
+    --     checkpoint.model = model
+    --     checkpoint.opt = opt
+    --     checkpoint.train_losses = train_losses
+    --     checkpoint.val_loss = val_loss
+    --     checkpoint.val_losses = val_losses
+    --     checkpoint.i = i
+    --     checkpoint.epoch = epoch
+    --     -- checkpoint.vocab = loader.vocab_mapping
+    --     torch.save(model_file, checkpoint)
 
 
 
-        local val_loss_log = io.open(savedir ..'/val_loss.txt', 'a')
-        val_loss_log:write(val_loss .. "\n")
-        val_loss_log:flush()
-        val_loss_log:close()
-        -- os.execute("say 'Checkpoint saved.'")
-        -- os.execute(string.format("say 'Epoch %.2f'", epoch))
-    end
+    --     local val_loss_log = io.open(savedir ..'/val_loss.txt', 'a')
+    --     val_loss_log:write(val_loss .. "\n")
+    --     val_loss_log:flush()
+    --     val_loss_log:close()
+    --     -- os.execute("say 'Checkpoint saved.'")
+    --     -- os.execute(string.format("say 'Epoch %.2f'", epoch))
+    -- end
 
     if i % opt.print_every == 0 then
         print(string.format("%d/%d (epoch %.3f), train_loss = %6.8f, grad/param norm = %6.4e, time/batch = %.2fs", i, iterations, epoch, train_loss, grad_params:norm() / params:norm(), time))

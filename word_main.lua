@@ -88,8 +88,8 @@ end
 f:flush()
 f:close()
 
-train_data = torch.load('/Users/ardavan/Documents/Research/RNAN/temp/final_101.txt')
-test_data = torch.load('/Users/ardavan/Documents/Research/RNAN/temp/final_102.txt')
+train_data = torch.load('/n/regal/adams_lab/ardi/RNAN/data_encoded/encoded_101.txt')
+test_data = torch.load('/n/regal/adams_lab/ardi/RNAN/data_encoded/encoded_102.txt')
 
 if opt.gpuid >= 0 then
     require 'cutorch'
@@ -161,27 +161,49 @@ end
 -- evaluate the loss over an entire split
 function eval_split(split_index, max_batches)
     print('evaluating loss over split index ' .. split_index)
-    local n = loader.split_sizes[split_index]
-    if max_batches ~= nil then n = math.min(max_batches, n) end
+    --split index is the index of the maximum run which we want to train on 
+    local n = split_index --loader.split_sizes[split_index]
+    -- if max_batches ~= nil then n = math.min(max_batches, n) end
 
-    loader:reset_batch_pointer(split_index) -- move batch iteration pointer for this split to front
+    -- loader:reset_batch_pointer(split_index) -- move batch iteration pointer for this split to front
     local loss = 0
     recurrent:reset()
     model:evaluate()
 
-    for i = 1,n do -- iterate over batches in the split
+    for i = 800, n do -- iterate over batches in the split
         -- fetch a batch
-        local x, y = loader:next_batch(split_index)
-        if opt.gpuid >= 0 then -- ship the input arrays to GPU
-            -- have to convert to float because integers can't be cuda()'d
-            x = x:float():cuda()
-            y = y:float():cuda()
+        -- local x, y = loader:next_batch(split_index)
+        -- if opt.gpuid >= 0 then -- ship the input arrays to GPU
+        --     -- have to convert to float because integers can't be cuda()'d
+        --     x = x:float():cuda()
+        --     y = y:float():cuda()
+        -- end
+        -- -- forward pass
+        -- predictions = model:forward(x)
+        -- for t = 1, opt.seq_length do
+        --     loss = loss + criterion:forward(predictions[t], y[{{}, t}])
+        -- end
+        temp_train_data = torch.load('/n/regal/adams_lab/ardi/RNAN/data_encoded/encoded_'.. tostring(n) .. '.txt')
+        local predictions = {}           -- softmax outputs
+        local grad_outputs = {}
+        local inputs = {}
+        local loss = 0
+
+        model:evaluate() -- make sure we are in correct mode (this is cheap, sets flag)
+        
+        -- TODO: fetch a new batch from val set
+
+        predictions = model:forward(temp_train_data[{{},{1,49},{}}])
+
+        -- print(train_data:size())
+        for t = 1, opt.seq_length - 1 do
+
+            -- print(train_data[{{},{t + 1},{1,45}}])
+            -- print(predictions[t])
+            -- print(t)
+            loss = loss + criterion:forward(predictions[t], temp_train_data[{{},{t + 1},{1,45}}]:reshape(10, 45))
         end
-        -- forward pass
-        predictions = model:forward(x)
-        for t = 1, opt.seq_length do
-            loss = loss + criterion:forward(predictions[t], y[{{}, t}])
-        end
+        
         print(i .. '/' .. n .. '...')
     end
 
@@ -191,6 +213,14 @@ function eval_split(split_index, max_batches)
     return loss
 end
 
+
+
+function get_next_batch()
+    random_index = torch.random(2, 800)
+    -- next_batch = torch.load('/Users/ardavan/Documents/Research/RNAN/data/encoded_'.. tostring(random_index) .. '.txt')
+    next_batch = torch.load('/n/regal/adams_lab/ardi/RNAN/data_encoded/encoded_'.. tostring(random_index) .. '.txt')
+    return next_batch
+end
 -- profiler = xlua.Profiler('on', true)
 -- do fwd/bwd and return loss, grad_params
 function feval(x)
@@ -210,6 +240,10 @@ function feval(x)
     -- end
     -- print(x)
 
+    ------------------ get minibatch -------------------
+    local tmp_train_data = get_next_batch()
+    -- print(tmp_train_data[{{1},{10},{1}}])
+
     ------------------- forward pass -------------------
     local predictions = {}           -- softmax outputs
     local grad_outputs = {}
@@ -217,7 +251,7 @@ function feval(x)
     local loss = 0
 
     model:training() -- make sure we are in correct mode (this is cheap, sets flag)
-    predictions = model:forward(train_data[{{},{1,49},{}}])
+    predictions = model:forward(tmp_train_data[{{},{1,49},{}}])
 
     -- print(train_data:size())
     for t = 1, opt.seq_length - 1 do
@@ -225,13 +259,13 @@ function feval(x)
         -- print(train_data[{{},{t + 1},{1,45}}])
         -- print(predictions[t])
         -- print(t)
-        loss = loss + criterion:forward(predictions[t], train_data[{{},{t + 1},{1,45}}]:reshape(10, 45))
-        grad_outputs[t] = criterion:backward(predictions[t], train_data[{{},{t + 1},{1,45}}]):clone()
+        loss = loss + criterion:forward(predictions[t], tmp_train_data[{{},{t + 1},{1,45}}]:reshape(10, 45))
+        grad_outputs[t] = criterion:backward(predictions[t], tmp_train_data[{{},{t + 1},{1,45}}]):clone()
     end
     loss = loss / opt.seq_length
     ------------------ backward pass -------------------
 
-    model:backward(train_data[{{},{1,49},{}}], grad_outputs)
+    model:backward(tmp_train_data[{{},{1,49},{}}], grad_outputs)
     grad_params:clamp(-opt.grad_clip, opt.grad_clip)
     -- grad_params:mul(-1)
     -- profiler:lap('batch')
@@ -268,37 +302,37 @@ for i = 1, iterations do
     --     end
     -- end
 
-    -- every now and then or on last iteration
-    -- if i % opt.eval_val_every == 0 or i == iterations then
-    --     -- evaluate loss on validation data
-    --     local val_loss = eval_split(2) -- 2 = validation
-    --     val_losses[i] = val_loss
-    --     print(string.format('[epoch %.3f] Validation loss: %6.8f', epoch, val_loss))
+    --every now and then or on last iteration
+    if i % opt.eval_val_every == 0 or i == iterations then
+        -- evaluate loss on validation data
+        local val_loss = eval_split(850) -- 2 = validation
+        val_losses[i] = val_loss
+        print(string.format('[epoch %.3f] Validation loss: %6.8f', epoch, val_loss))
 
 
 
-    --     local model_file = string.format('%s/epoch%.2f_%.4f.t7', savedir, epoch, val_loss)
-    --     print('saving checkpoint to ' .. model_file)
-    --     local checkpoint = {}
-    --     checkpoint.model = model
-    --     checkpoint.opt = opt
-    --     checkpoint.train_losses = train_losses
-    --     checkpoint.val_loss = val_loss
-    --     checkpoint.val_losses = val_losses
-    --     checkpoint.i = i
-    --     checkpoint.epoch = epoch
-    --     -- checkpoint.vocab = loader.vocab_mapping
-    --     torch.save(model_file, checkpoint)
+        local model_file = string.format('%s/epoch%.2f_%.4f.t7', savedir, epoch, val_loss)
+        print('saving checkpoint to ' .. model_file)
+        local checkpoint = {}
+        checkpoint.model = model
+        checkpoint.opt = opt
+        checkpoint.train_losses = train_losses
+        checkpoint.val_loss = val_loss
+        checkpoint.val_losses = val_losses
+        checkpoint.i = i
+        checkpoint.epoch = epoch
+        -- checkpoint.vocab = loader.vocab_mapping
+        torch.save(model_file, checkpoint)
 
 
 
-    --     local val_loss_log = io.open(savedir ..'/val_loss.txt', 'a')
-    --     val_loss_log:write(val_loss .. "\n")
-    --     val_loss_log:flush()
-    --     val_loss_log:close()
-    --     -- os.execute("say 'Checkpoint saved.'")
-    --     -- os.execute(string.format("say 'Epoch %.2f'", epoch))
-    -- end
+        local val_loss_log = io.open(savedir ..'/val_loss.txt', 'a')
+        val_loss_log:write(val_loss .. "\n")
+        val_loss_log:flush()
+        val_loss_log:close()
+        -- os.execute("say 'Checkpoint saved.'")
+        -- os.execute(string.format("say 'Epoch %.2f'", epoch))
+    end
 
     if i % opt.print_every == 0 then
         print(string.format("%d/%d (epoch %.3f), train_loss = %6.8f, grad/param norm = %6.4e, time/batch = %.2fs", i, iterations, epoch, train_loss, grad_params:norm() / params:norm(), time))

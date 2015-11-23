@@ -19,6 +19,8 @@ cmd:text('Options')
 -- data
 cmd:option('-data_file','','data file. should be a tensor. if none specified, will use wikipedia of correct vocab size.')
 cmd:option('-vocab_size',10000,'what vocab size to use')
+cmd:option('-action_size',832,'number of possible actions')
+cmd:option('-location_size',832,'number of possible locations')
 
 -- model params
 cmd:option('-rnn_size', 128, 'size of LSTM internal state')
@@ -132,7 +134,7 @@ else
     if opt.model == 'lstm' then
         require 'SteppableLSTM'
         -- one_hot = OneHot(vocab_size)
-        recurrent = nn.SteppableLSTM(877, 45, opt.rnn_size, opt.num_layers, opt.dropout)
+        recurrent = nn.SteppableLSTM(opt.location_size + opt.action_size, opt.location_size, opt.rnn_size, opt.num_layers, opt.dropout)
         model = nn.Sequential()
 
         -- model:add(one_hot)
@@ -183,7 +185,7 @@ function eval_split(split_index, max_batches)
         -- for t = 1, opt.seq_length do
         --     loss = loss + criterion:forward(predictions[t], y[{{}, t}])
         -- end
-        temp_train_data = torch.load('/n/regal/adams_lab/ardi/RNAN/data_encoded/encoded_'.. tostring(n) .. '.txt')
+        temp_train_data = torch.load('/n/regal/adams_lab/ardi/RNAN/data_encoded_new2/notencoded_'.. tostring(n) .. '.txt')
         local predictions = {}           -- softmax outputs
         local grad_outputs = {}
         local inputs = {}
@@ -201,7 +203,7 @@ function eval_split(split_index, max_batches)
             -- print(train_data[{{},{t + 1},{1,45}}])
             -- print(predictions[t])
             -- print(t)
-            loss = loss + criterion:forward(predictions[t], temp_train_data[{{},{t + 1},{1,45}}]:reshape(10, 45))
+            loss = loss + criterion:forward(predictions[t], temp_train_data[{{},{t + 1},{1,opt.location_size}}]:reshape(10, opt.location_size))
         end
         
         print(i .. '/' .. n .. '...')
@@ -218,7 +220,7 @@ end
 function get_next_batch()
     random_index = torch.random(2, 800)
     -- next_batch = torch.load('/Users/ardavan/Documents/Research/RNAN/data/encoded_'.. tostring(random_index) .. '.txt')
-    next_batch = torch.load('/n/regal/adams_lab/ardi/RNAN/data_encoded/encoded_'.. tostring(random_index) .. '.txt')
+    next_batch = torch.load('/n/regal/adams_lab/ardi/RNAN/data_encoded_new2/notencoded_'.. tostring(random_index) .. '.txt')
     return next_batch
 end
 -- profiler = xlua.Profiler('on', true)
@@ -259,8 +261,8 @@ function feval(x)
         -- print(train_data[{{},{t + 1},{1,45}}])
         -- print(predictions[t])
         -- print(t)
-        loss = loss + criterion:forward(predictions[t], tmp_train_data[{{},{t + 1},{1,45}}]:reshape(10, 45))
-        grad_outputs[t] = criterion:backward(predictions[t], tmp_train_data[{{},{t + 1},{1,45}}]):clone()
+        loss = loss + criterion:forward(predictions[t], tmp_train_data[{{},{t + 1},{1,opt.location_size}}]:reshape(10, opt.location_size))
+        grad_outputs[t] = criterion:backward(predictions[t], tmp_train_data[{{},{t + 1},{1,opt.location_size}}]):clone()
     end
     loss = loss / opt.seq_length
     ------------------ backward pass -------------------
